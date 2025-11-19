@@ -4,6 +4,12 @@ import numpy as np
 import cv2
 import math
 
+from moviepy.editor import VideoFileClip
+try:
+    from IPython.display import HTML
+except Exception:
+    HTML = None
+
 ############ UTILITY FUNCTION #############
 def region_of_interest(img, vertices):
     # Define a blank matrix that matches the image height/width.
@@ -55,9 +61,9 @@ def pipeline(image):
 
     # Cropping to a region of interest
     region_of_interest_vertices = [
-        (0, 590),
-        (1052 / 2, 590 / 2),
-        (1052, 590),
+        (0, height),
+        (width / 2, height / 2),
+        (width, height),
     ]
 
     # Convert to grayscale
@@ -68,14 +74,45 @@ def pipeline(image):
 
     cropped_image = region_of_interest(cannyed_image,np.array([region_of_interest_vertices], np.int32), )
 
-    lines = cv2.HoughLinesP(cropped_image,
-                            rho=6, 
-                            theta=np.pi / 60,
-                            threshold=160,
-                            lines=np.array([]),
-                            minLineLength=40,
-                            maxLineGap=25)
+    # initial Hough attempt (tuned for this video)
+    H_PARAMS = dict(rho=1, theta=np.pi / 180, threshold=30, lines=np.array([]), minLineLength=20, maxLineGap=40)
+    lines = cv2.HoughLinesP(cropped_image, **H_PARAMS)
 
+    # fallback strategies when Hough returns None
+    if lines is None:
+        # 1) dilate the edges slightly to bridge small gaps
+        kernel = np.ones((3, 3), np.uint8)
+        dilated = cv2.dilate(cropped_image, kernel, iterations=1)
+        lines = cv2.HoughLinesP(dilated, **H_PARAMS)
+
+    if lines is None:
+        # 2) try a lower threshold to be more permissive
+        H_LOWER = H_PARAMS.copy()
+        H_LOWER['threshold'] = max(10, int(H_PARAMS['threshold'] * 0.5))
+        lines = cv2.HoughLinesP(cropped_image, **H_LOWER)
+
+    # If still None, attempt to reuse last good fit (temporal smoothing)
+    max_y = image.shape[0]
+    min_y = int(image.shape[0] * (2.2 / 5)) # Just below the horizon
+    if lines is None:
+        if hasattr(pipeline, 'prev_left_poly') and hasattr(pipeline, 'prev_right_poly'):
+            left_x_start = int(pipeline.prev_left_poly(max_y))
+            left_x_end = int(pipeline.prev_left_poly(min_y))
+            right_x_start = int(pipeline.prev_right_poly(max_y))
+            right_x_end = int(pipeline.prev_right_poly(min_y))
+            line_image = draw_lines(
+                image,
+                [[
+                    [left_x_start, max_y, left_x_end, min_y],
+                    [right_x_start, max_y, right_x_end, min_y],
+                ]],
+                thickness=5,
+            )
+            return line_image
+        else:
+            return image
+
+    # Collect segments into left/right point lists
     left_line_x = []
     left_line_y = []
     right_line_x = []
@@ -83,8 +120,11 @@ def pipeline(image):
 
     for line in lines:
         for x1, y1, x2, y2 in line:
+            # guard against vertical lines (x2 == x1)
+            if x2 == x1:
+                continue
             slope = (y2 - y1) / (x2 - x1)
-            if math.fabs(slope) < 0.5: # <-- Only consider extreme slope
+            if math.fabs(slope) < 0.5:  # only consider steep-enough slopes
                 continue
             if slope < 0:
                 left_line_x.extend([x1, x2])
@@ -93,18 +133,72 @@ def pipeline(image):
                 right_line_x.extend([x1, x2])
                 right_line_y.extend([y1, y2])
 
-    min_y = int(image.shape[0] * (3 / 5)) # Just below the horizon
-    max_y = image.shape[0]
+    have_left = len(left_line_x) >= 2 and len(left_line_y) >= 2
+    have_right = len(right_line_x) >= 2 and len(right_line_y) >= 2
 
-    poly_left = np.poly1d(np.polyfit(left_line_y, left_line_x, deg=1))
-    left_x_start = int(poly_left(max_y))
-    left_x_end = int(poly_left(min_y))
+    # If one side missing, try to use previous polynomial for that side (if exists)
+    if not (have_left and have_right):
+        if hasattr(pipeline, 'prev_left_poly') and hasattr(pipeline, 'prev_right_poly'):
+            if not have_left:
+                poly_left = pipeline.prev_left_poly
+            else:
+                poly_left = np.poly1d(np.polyfit(left_line_y, left_line_x, deg=1))
+            if not have_right:
+                poly_right = pipeline.prev_right_poly
+            else:
+                poly_right = np.poly1d(np.polyfit(right_line_y, right_line_x, deg=1))
+        else:
+            # If only one side is available and no previous, attempt simple heuristics
+            if have_left and not have_right:
+                poly_left = np.poly1d(np.polyfit(left_line_y, left_line_x, deg=1))
+                poly_right = lambda y: int(poly_left(y) + image.shape[1] * 0.4)
+            elif have_right and not have_left:
+                poly_right = np.poly1d(np.polyfit(right_line_y, right_line_x, deg=1))
+                poly_left = lambda y: int(poly_right(y) - image.shape[1] * 0.4)
+            else:
+                return image
+    else:
+        poly_left = np.poly1d(np.polyfit(left_line_y, left_line_x, deg=1))
+        poly_right = np.poly1d(np.polyfit(right_line_y, right_line_x, deg=1))
 
-    poly_right = np.poly1d(np.polyfit(right_line_y, right_line_x, deg=1))
-    right_x_start = int(poly_right(max_y))
-    right_x_end = int(poly_right(min_y))
+    # Smooth polynomials using previous frames (exponential moving average on x values)
+    try:
+        y1 = max_y
+        y2 = min_y
+        alpha = getattr(pipeline, 'smoothing', 0.75)
 
-    # line_image = draw_lines(image, lines)
+        # left
+        new_left_x1 = poly_left(y1)
+        new_left_x2 = poly_left(y2)
+        if hasattr(pipeline, 'prev_left_poly'):
+            prev_left_x1 = pipeline.prev_left_poly(y1)
+            prev_left_x2 = pipeline.prev_left_poly(y2)
+            sx1 = alpha * prev_left_x1 + (1 - alpha) * new_left_x1
+            sx2 = alpha * prev_left_x2 + (1 - alpha) * new_left_x2
+            pipeline.prev_left_poly = np.poly1d(np.polyfit([y1, y2], [sx1, sx2], deg=1))
+        else:
+            pipeline.prev_left_poly = poly_left
+
+        # right
+        new_right_x1 = poly_right(y1)
+        new_right_x2 = poly_right(y2)
+        if hasattr(pipeline, 'prev_right_poly'):
+            prev_right_x1 = pipeline.prev_right_poly(y1)
+            prev_right_x2 = pipeline.prev_right_poly(y2)
+            sx1 = alpha * prev_right_x1 + (1 - alpha) * new_right_x1
+            sx2 = alpha * prev_right_x2 + (1 - alpha) * new_right_x2
+            pipeline.prev_right_poly = np.poly1d(np.polyfit([y1, y2], [sx1, sx2], deg=1))
+        else:
+            pipeline.prev_right_poly = poly_right
+    except Exception:
+        pipeline.prev_left_poly = poly_left
+        pipeline.prev_right_poly = poly_right
+
+    left_x_start = int(pipeline.prev_left_poly(max_y))
+    left_x_end = int(pipeline.prev_left_poly(min_y))
+    right_x_start = int(pipeline.prev_right_poly(max_y))
+    right_x_end = int(pipeline.prev_right_poly(min_y))
+
     line_image = draw_lines(
         image,
         [[
@@ -121,22 +215,28 @@ image = mpimg.imread('path_to_image.jpg')
 pipeline(image)
 
 ############# DISPLAY RESULTS #############
-# Printing out some stats and plotting the image
-print('This image is:', type(image), 'with dimensions:', image.shape)
-# Create a 2x2 subplot grid and use the first three axes for our images.
-fig, axs = plt.subplots(1, 2, figsize=(15, 7))
-# Flatten the axes array for easy indexing (axs[0], axs[1], axs[2], axs[3])
-axs = axs.flatten()
+# # Printing out some stats and plotting the image
+# print('This image is:', type(image), 'with dimensions:', image.shape)
+# # Create a 2x2 subplot grid and use the first three axes for our images.
+# fig, axs = plt.subplots(1, 2, figsize=(15, 7))
+# # Flatten the axes array for easy indexing (axs[0], axs[1], axs[2], axs[3])
+# axs = axs.flatten()
 
-# Original image
-axs[0].imshow(image)
-axs[0].set_title('Original Image')
-axs[0].axis('on')
+# # Original image
+# axs[0].imshow(image)
+# axs[0].set_title('Original Image')
+# axs[0].axis('on')
 
-# Cropped image
-axs[1].imshow(pipeline(image))
-axs[1].set_title('Line Decection with Hough Transform')
-axs[1].axis('on')
+# # Cropped image
+# axs[1].imshow(pipeline(image))
+# axs[1].set_title('Line Decection with Hough Transform')
+# axs[1].axis('on')
 
-plt.tight_layout()
-plt.show()
+# plt.tight_layout()
+# plt.show()
+
+# Video processing pipeline
+white_output = 'test_video_output.mp4'
+clip1 = VideoFileClip("test_video.mp4")
+white_clip = clip1.fl_image(pipeline)
+white_clip.write_videofile(white_output, audio=False)
