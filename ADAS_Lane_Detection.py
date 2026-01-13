@@ -108,9 +108,9 @@ def pipeline(image):
                 ]],
                 thickness=5,
             )
-            return line_image
+            return line_image, None
         else:
-            return image
+            return image, None
 
     # Collect segments into left/right point lists
     left_line_x = []
@@ -156,7 +156,7 @@ def pipeline(image):
                 poly_right = np.poly1d(np.polyfit(right_line_y, right_line_x, deg=1))
                 poly_left = lambda y: int(poly_right(y) - image.shape[1] * 0.4)
             else:
-                return image
+                return image, None
     else:
         poly_left = np.poly1d(np.polyfit(left_line_y, left_line_x, deg=1))
         poly_right = np.poly1d(np.polyfit(right_line_y, right_line_x, deg=1))
@@ -208,11 +208,13 @@ def pipeline(image):
         thickness=5,
     )
 
-    return line_image
+    lane_center = (left_x_start + right_x_start) / 2
+    return line_image, lane_center
 
-# Reading in an image
-image = mpimg.imread('path_to_image.jpg')
-pipeline(image)
+if __name__ == "__main__":
+    # Reading in an image
+    image = mpimg.imread('path_to_image.jpg')
+    processed_image, _ = pipeline(image)
 
 ############# DISPLAY RESULTS #############
 # # Printing out some stats and plotting the image
@@ -235,8 +237,8 @@ pipeline(image)
 # plt.tight_layout()
 # plt.show()
 
-# Video processing pipeline
-white_output = 'test_video_output.mp4'
-clip1 = VideoFileClip("test_video.mp4")
-white_clip = clip1.fl_image(pipeline)
-white_clip.write_videofile(white_output, audio=False)
+if __name__ == "__main__":
+    # Video processing pipeline
+    def pipeline_wrapper(image):
+        img, _ = pipeline(image)
+        return img
