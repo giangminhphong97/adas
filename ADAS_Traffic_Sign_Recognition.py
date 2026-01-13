@@ -1,9 +1,10 @@
-import numpy as np
-import pandas as pd
-import matplotlib.pyplot as plt
-import tensorflow as tf
-from PIL import Image
 import os
+os.environ['TF_ENABLE_ONEDNN_OPTS'] = '0'
+
+import numpy as np
+import matplotlib.pyplot as plt
+import pandas as pd
+from PIL import Image
 from sklearn.model_selection import train_test_split
 from keras.utils import to_categorical
 from keras.models import Sequential
@@ -81,3 +82,21 @@ ax2.legend()
 
 plt.tight_layout()
 plt.show()
+
+#testing accuracy on test dataset
+from sklearn.metrics import accuracy_score
+y_test = pd.read_csv(os.path.join(cur_path, 'dataset', 'traffic_sign', 'Test.csv'))
+labels = y_test["ClassId"].values
+imgs = y_test["Path"].values
+data=[]
+for img in imgs:
+    image = Image.open(os.path.join(cur_path, 'dataset', 'traffic_sign', img))
+    image = image.resize((30,30))
+    data.append(np.array(image))
+X_test=np.array(data)
+
+pred = model.predict(X_test)
+pred_classes = np.argmax(pred, axis=1)
+#Accuracy with the test data
+from sklearn.metrics import accuracy_score
+print("Test Accuracy:", accuracy_score(labels, pred_classes))
