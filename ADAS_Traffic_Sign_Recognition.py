@@ -61,20 +61,23 @@ model.compile(loss='categorical_crossentropy', optimizer='adam', metrics=['accur
 epochs = 15
 history = model.fit(X_train, y_train, batch_size=64, epochs=epochs, validation_data=(X_test, y_test))
 
-plt.figure(0)
-plt.plot(history.history['accuracy'], label='training accuracy')
-plt.plot(history.history['val_accuracy'], label='validation accuracy')
-plt.title('Accuracy')
-plt.xlabel('epochs')
-plt.ylabel('accuracy')
-plt.legend()
-plt.show()
+fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 5))
 
-plt.figure(1)
-plt.plot(history.history['loss'], label='training loss')
-plt.plot(history.history['val_loss'], label='validation loss')
-plt.title('Loss')
-plt.xlabel('epochs')
-plt.ylabel('loss')
-plt.legend()
+# Plot accuracy on the first subplot
+ax1.plot(history.history['accuracy'], label='training accuracy')
+ax1.plot(history.history['val_accuracy'], label='validation accuracy')
+ax1.set_title('Accuracy')
+ax1.set_xlabel('epochs')
+ax1.set_ylabel('accuracy')
+ax1.legend()
+
+# Plot loss on the second subplot
+ax2.plot(history.history['loss'], label='training loss')
+ax2.plot(history.history['val_loss'], label='validation loss')
+ax2.set_title('Loss')
+ax2.set_xlabel('epochs')
+ax2.set_ylabel('loss')
+ax2.legend()
+
+plt.tight_layout()
 plt.show()
