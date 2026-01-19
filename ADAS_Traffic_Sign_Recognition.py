@@ -2,10 +2,12 @@ import os
 os.environ['TF_ENABLE_ONEDNN_OPTS'] = '0'
 
 import numpy as np
+np.object = object
 import matplotlib.pyplot as plt
 import pandas as pd
 from PIL import Image
 from sklearn.model_selection import train_test_split
+from sklearn.metrics import accuracy_score
 from keras.utils import to_categorical
 from keras.models import Sequential
 from keras.layers import Conv2D, MaxPooling2D, Flatten, Dense, Dropout
@@ -16,7 +18,7 @@ classes = 43
 cur_path = os.getcwd()
 
 for i in range(classes):
-    path = os.path.join(cur_path, 'dataset','traffic_sign', 'train', str(i))
+    path = os.path.join(cur_path, 'dataset','traffic_sign', 'Train', str(i))
     images = os.listdir(path)
     
     for a in images:
@@ -26,8 +28,9 @@ for i in range(classes):
             image = np.array(image)
             data.append(image)
             labels.append(i)
-        except:
-            print("Error loading image:", a)
+        except Exception as e:
+            print(f"Error loading image {a}: {e}")
+            continue
 
 data = np.array(data)
 labels = np.array(labels)
@@ -80,23 +83,33 @@ ax2.set_xlabel('epochs')
 ax2.set_ylabel('loss')
 ax2.legend()
 
+model.save('traffic_sign_model.h5')
+print("Model saved as traffic_sign_model.h5")
+
 plt.tight_layout()
 plt.show()
 
-#testing accuracy on test dataset
-from sklearn.metrics import accuracy_score
-y_test = pd.read_csv(os.path.join(cur_path, 'dataset', 'traffic_sign', 'Test.csv'))
-labels = y_test["ClassId"].values
-imgs = y_test["Path"].values
-data=[]
-for img in imgs:
-    image = Image.open(os.path.join(cur_path, 'dataset', 'traffic_sign', img))
-    image = image.resize((30,30))
-    data.append(np.array(image))
-X_test=np.array(data)
+# Testing accuracy on test dataset
+test_data = pd.read_csv(os.path.join(cur_path, 'dataset', 'traffic_sign', 'Test.csv'))
+labels = test_data["ClassId"].values
+imgs = test_data["Path"].values
+
+test_images = []
+valid_labels = []
+
+for idx, img in enumerate(imgs):
+    try:
+        image = Image.open(os.path.join(cur_path, 'dataset', 'traffic_sign', img))
+        image = image.resize((30, 30))
+        test_images.append(np.array(image))
+        valid_labels.append(labels[idx])
+    except Exception as e:
+        print(f"Skipping corrupted test image {img}: {e}")
+        continue
+
+X_test = np.array(test_images)
+valid_labels = np.array(valid_labels)
 
 pred = model.predict(X_test)
 pred_classes = np.argmax(pred, axis=1)
-#Accuracy with the test data
-from sklearn.metrics import accuracy_score
-print("Test Accuracy:", accuracy_score(labels, pred_classes))
+print("Test Accuracy:", accuracy_score(valid_labels, pred_classes))

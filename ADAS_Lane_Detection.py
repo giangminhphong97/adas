@@ -93,7 +93,7 @@ def pipeline(image):
 
     # If still None, attempt to reuse last good fit (temporal smoothing)
     max_y = image.shape[0]
-    min_y = int(image.shape[0] * (2.2 / 5)) # Just below the horizon
+    min_y = int(image.shape[0] * (3.0 / 5)) # Just below the horizon
     if lines is None:
         if hasattr(pipeline, 'prev_left_poly') and hasattr(pipeline, 'prev_right_poly'):
             left_x_start = int(pipeline.prev_left_poly(max_y))
