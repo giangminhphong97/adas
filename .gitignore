@@ -207,3 +207,18 @@ marimo/_lsp/
 __marimo__/
 /dataset
 /dataset_yolo
+# Test and training scripts (temporary)
+prepare_yolo_dataset.py
+train_yolo.py
+train_yolo_trial.py
+small_train_trial.py
+detect_yolo_debug.py
+detect_combined_test.py
+detect_yolo_test.py
+create_test_video.py
+test_classifier_load.py
+yolo_test_out.png
+
+# YOLO training runs
+/runs/
+/dataset_yolo_small/
